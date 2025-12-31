@@ -71,6 +71,16 @@ model = dict(
         add_extra_convs='on_output',
         num_outs=_num_levels_,
         relu_before_extra_convs=True),
+    sat_backbone= dict(
+        type='AlignedSatelliteEncoder',
+        in_channels=3,
+        out_channels=_dim_,
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+        base_channels=64,
+        use_geo_transform=True,
+        init_cfg=dict(type='Pretrained',
+                      checkpoint='ckpts/resnet50-19c8e357.pth')),
     pts_bbox_head=dict(
         type='MapTRHead',
         bev_h=bev_h_,
@@ -126,6 +136,13 @@ model = dict(
                     ffn_dropout=0.1,
                     operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
                                      'ffn', 'norm'))),
+            fusion=dict(
+                type='MapFusion',
+                in_channels=[_dim_, _dim_],
+                out_channels=_dim_,
+                num_levels=_num_levels_,
+                fusion_type='concat'
+            ),
             decoder=dict(
                 type='MapTRDecoder',
                 num_layers=6,
