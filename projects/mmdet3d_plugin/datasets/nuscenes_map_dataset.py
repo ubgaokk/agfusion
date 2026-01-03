@@ -21,6 +21,10 @@ from nuscenes.eval.common.utils import quaternion_yaw, Quaternion
 from shapely import affinity, ops
 from shapely.geometry import LineString, box, MultiPolygon, MultiLineString
 from mmdet.datasets.pipelines import to_tensor
+from .prior_map import PriorMap
+from shapely import affinity, ops
+from shapely.geometry import LineString, box, MultiPolygon, MultiLineString
+from mmdet.datasets.pipelines import to_tensor
 import json
 
 
@@ -945,17 +949,26 @@ class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):
         self.noise = noise
         self.noise_std = noise_std
         
-        # Satellite image configuration
+        # Satellite image configuration using PriorMap
         self.use_satellite = use_satellite
         self.satellite_dir = satellite_dir
         self.satellite_size = satellite_size
         self.satellite_format = satellite_format
         
+        # Initialize PriorMap for satellite image loading
+        self.prior_map = None
         if self.use_satellite:
             assert self.satellite_dir is not None, \
                 "satellite_dir must be provided when use_satellite=True"
             if not osp.exists(self.satellite_dir):
                 print(f"Warning: satellite_dir {self.satellite_dir} does not exist!")
+            else:
+                print(f"Initializing PriorMap with satellite_dir: {self.satellite_dir}")
+                self.prior_map = PriorMap(
+                    prior_map_root=self.satellite_dir,
+                    img_size=self.satellite_size
+                )
+                print(f"PriorMap initialized successfully with {len(self.prior_map.config)} satellite images")
     @classmethod
     def get_map_classes(cls, map_classes=None):
         """Get class names of current dataset.
@@ -983,21 +996,25 @@ class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):
 
         return class_names
     
-    def _get_satellite_filename(self, sample_token, location):
+    def get_satellite_image(self, sample_token):
         """
-        Generate satellite image filename from sample token and location.
+        Load satellite image using PriorMap.
         
         Args:
             sample_token (str): Sample token from nuScenes
-            location (str): Map location name
             
         Returns:
-            str: Satellite image filename
+            torch.Tensor: Satellite image tensor (normalized), or None if not available
         """
-        # Default naming convention: {location}_{sample_token}.{format}
-        # You can customize this based on your satellite image naming scheme
-        filename = f"{location}_{sample_token}.{self.satellite_format}"
-        return filename
+        if self.prior_map is None:
+            return None
+        
+        try:
+            satellite_img = self.prior_map.get_prior_map(sample_token)
+            return satellite_img
+        except Exception as e:
+            print(f"Warning: Failed to load satellite image for token {sample_token}: {e}")
+            return None
     
     def vectormap_pipeline(self, example, input_dict):
         '''
@@ -1247,20 +1264,20 @@ class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):
         lidar2global = ego2global @ lidar2ego
         input_dict['lidar2global'] = lidar2global
         
-        # Add satellite image path if enabled
-        if self.use_satellite:
-            satellite_filename = self._get_satellite_filename(info['token'], input_dict['map_location'])
-            satellite_path = osp.join(self.satellite_dir, satellite_filename)
-            input_dict['satellite_img_path'] = satellite_path
-            
-            # Add satellite image metadata
-            input_dict['satellite_metadata'] = dict(
-                ego2global_translation=translation,
-                ego2global_rotation=rotation,
-                lidar2global=lidar2global,
-                patch_size=self.patch_size,
-                satellite_size=self.satellite_size,
-            )
+        # Load satellite image using PriorMap if enabled
+        if self.use_satellite and self.prior_map is not None:
+            satellite_img = self.get_satellite_image(info['token'])
+            if satellite_img is not None:
+                input_dict['satellite_img'] = satellite_img
+                
+                # Add satellite image metadata
+                input_dict['satellite_metadata'] = dict(
+                    ego2global_translation=translation,
+                    ego2global_rotation=rotation,
+                    lidar2global=lidar2global,
+                    patch_size=self.patch_size,
+                    satellite_size=self.satellite_size,
+                )
         
         return input_dict
 
