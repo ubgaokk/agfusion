@@ -915,6 +915,10 @@ class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):
                  map_classes=None,
                  noise='None',
                  noise_std=0,
+                 use_satellite=False,
+                 satellite_dir=None,
+                 satellite_size=(512, 512),
+                 satellite_format='png',
                  *args, 
                  **kwargs):
         super().__init__(*args, **kwargs)
@@ -940,6 +944,18 @@ class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):
         self.is_vis_on_test = False
         self.noise = noise
         self.noise_std = noise_std
+        
+        # Satellite image configuration
+        self.use_satellite = use_satellite
+        self.satellite_dir = satellite_dir
+        self.satellite_size = satellite_size
+        self.satellite_format = satellite_format
+        
+        if self.use_satellite:
+            assert self.satellite_dir is not None, \
+                "satellite_dir must be provided when use_satellite=True"
+            if not osp.exists(self.satellite_dir):
+                print(f"Warning: satellite_dir {self.satellite_dir} does not exist!")
     @classmethod
     def get_map_classes(cls, map_classes=None):
         """Get class names of current dataset.
@@ -966,6 +982,23 @@ class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):
             raise ValueError(f'Unsupported type {type(map_classes)} of map classes.')
 
         return class_names
+    
+    def _get_satellite_filename(self, sample_token, location):
+        """
+        Generate satellite image filename from sample token and location.
+        
+        Args:
+            sample_token (str): Sample token from nuScenes
+            location (str): Map location name
+            
+        Returns:
+            str: Satellite image filename
+        """
+        # Default naming convention: {location}_{sample_token}.{format}
+        # You can customize this based on your satellite image naming scheme
+        filename = f"{location}_{sample_token}.{self.satellite_format}"
+        return filename
+    
     def vectormap_pipeline(self, example, input_dict):
         '''
         `example` type: <class 'dict'>
@@ -1053,6 +1086,11 @@ class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):
         prev_scene_token = None
         prev_pos = None
         prev_angle = None
+        
+        # Collect satellite images if available
+        satellite_imgs_list = []
+        has_satellite = self.use_satellite and 'satellite_img' in queue[0]
+        
         for i, each in enumerate(queue):
             metas_map[i] = each['img_metas'].data
             if metas_map[i]['scene_token'] != prev_scene_token:
@@ -1070,10 +1108,20 @@ class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):
                 metas_map[i]['can_bus'][-1] -= prev_angle
                 prev_pos = copy.deepcopy(tmp_pos)
                 prev_angle = copy.deepcopy(tmp_angle)
+            
+            # Collect satellite images
+            if has_satellite:
+                satellite_imgs_list.append(each['satellite_img'].data)
 
         queue[-1]['img'] = DC(torch.stack(imgs_list),
                               cpu_only=False, stack=True)
         queue[-1]['img_metas'] = DC(metas_map, cpu_only=True)
+        
+        # Add stacked satellite images if available
+        if has_satellite and len(satellite_imgs_list) > 0:
+            queue[-1]['satellite_img'] = DC(torch.stack(satellite_imgs_list),
+                                           cpu_only=False, stack=True)
+        
         queue = queue[-1]
         return queue
 
@@ -1198,6 +1246,22 @@ class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):
         ego2global[:3, 3] = input_dict['ego2global_translation']
         lidar2global = ego2global @ lidar2ego
         input_dict['lidar2global'] = lidar2global
+        
+        # Add satellite image path if enabled
+        if self.use_satellite:
+            satellite_filename = self._get_satellite_filename(info['token'], input_dict['map_location'])
+            satellite_path = osp.join(self.satellite_dir, satellite_filename)
+            input_dict['satellite_img_path'] = satellite_path
+            
+            # Add satellite image metadata
+            input_dict['satellite_metadata'] = dict(
+                ego2global_translation=translation,
+                ego2global_rotation=rotation,
+                lidar2global=lidar2global,
+                patch_size=self.patch_size,
+                satellite_size=self.satellite_size,
+            )
+        
         return input_dict
 
     def prepare_test_data(self, index):
@@ -1342,8 +1406,8 @@ class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):
         for i in range(self.NUM_MAPCLASSES):
             vector_num_list[i] = []
         for vec in gt_vectors:
-            if vector['pts_num'] >= 2:
-                vector_num_list[vector['type']].append((LineString(vector['pts'][:vector['pts_num']]), vector.get('confidence_level', 1)))
+            if vec['pts_num'] >= 2:
+                vector_num_list[vec['type']].append((LineString(vec['pts'][:vec['pts_num']]), vec.get('confidence_level', 1)))
         return gt_vectors
 
     def _evaluate_single(self,

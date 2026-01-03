@@ -366,3 +366,99 @@ class CustomLoadPointsFromFile:
 
         return results
 
+
+@PIPELINES.register_module()
+class LoadSatelliteImageFromFile(object):
+    """Load satellite image from file.
+    
+    This pipeline loads satellite imagery that corresponds to the current
+    scene location for fusion with BEV features.
+    
+    Args:
+        to_float32 (bool): Whether to convert the img to float32.
+            Defaults to False.
+        color_type (str): Color type of the file. Defaults to 'color'.
+        file_client_args (dict): Arguments to instantiate a FileClient.
+            See :class:`mmcv.fileio.FileClient` for details.
+            Defaults to ``dict(backend='disk')``.
+        default_value (int): Default pixel value if satellite image not found.
+            Defaults to 0.
+        satellite_size (tuple): Target size for satellite image (H, W).
+            Defaults to None (use original size).
+    """
+
+    def __init__(
+        self,
+        to_float32=False,
+        color_type='color',
+        file_client_args=dict(backend='disk'),
+        default_value=0,
+        satellite_size=None,
+    ):
+        self.to_float32 = to_float32
+        self.color_type = color_type
+        self.file_client_args = file_client_args.copy()
+        self.file_client = None
+        self.default_value = default_value
+        self.satellite_size = satellite_size
+
+    def __call__(self, results):
+        """Call function to load satellite image from file.
+
+        Args:
+            results (dict): Result dict containing satellite image path.
+
+        Returns:
+            dict: The result dict containing the satellite image data.
+                Added keys and values are described below.
+
+                - satellite_img_filename (str): Satellite image filename.
+                - satellite_img (np.ndarray): Satellite image array.
+                - satellite_img_shape (tuple[int]): Shape of satellite image.
+                - satellite_metadata (dict): Metadata for satellite alignment.
+        """
+        if self.file_client is None:
+            self.file_client = mmcv.FileClient(**self.file_client_args)
+
+        satellite_img_path = results.get('satellite_img_path', None)
+        
+        if satellite_img_path is None or not os.path.exists(satellite_img_path):
+            # Create default satellite image if not found
+            if self.satellite_size is not None:
+                img = np.full(
+                    (self.satellite_size[0], self.satellite_size[1], 3),
+                    self.default_value,
+                    dtype=np.uint8
+                )
+            else:
+                # Default to 512x512 if not specified
+                img = np.full((512, 512, 3), self.default_value, dtype=np.uint8)
+            
+            results['satellite_img_available'] = False
+        else:
+            # Load satellite image
+            img_bytes = self.file_client.get(satellite_img_path)
+            img = mmcv.imfrombytes(img_bytes, flag=self.color_type)
+            
+            # Resize if target size specified
+            if self.satellite_size is not None:
+                img = mmcv.imresize(img, self.satellite_size[::-1])  # (W, H) format
+            
+            results['satellite_img_available'] = True
+        
+        if self.to_float32:
+            img = img.astype(np.float32)
+        
+        results['satellite_img_filename'] = satellite_img_path
+        results['satellite_img'] = img
+        results['satellite_img_shape'] = img.shape
+        
+        return results
+
+    def __repr__(self):
+        """str: Return a string that describes the module."""
+        repr_str = self.__class__.__name__
+        repr_str += f'(to_float32={self.to_float32}, '
+        repr_str += f"color_type='{self.color_type}', "
+        repr_str += f"satellite_size={self.satellite_size})"
+        return repr_str
