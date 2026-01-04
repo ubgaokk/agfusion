@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from mmcv.cnn import build_conv_layer
 from mmcv.runner import auto_fp16
-from mmdet.models import TRANSFORMER
+from mmdet.models.utils.builder import TRANSFORMER
 
 from projects.mmdet3d_plugin.bevformer.modules.transformer import PerceptionTransformer
 from mmcv.cnn import build_model_from_cfg

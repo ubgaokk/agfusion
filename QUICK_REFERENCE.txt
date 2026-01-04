@@ -1,0 +1,92 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    AGFusion Training Quick Reference                       ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+┌─ ISSUE FIXED ──────────────────────────────────────────────────────────────┐
+│ ✓ ModuleNotFoundError: No module named 'projects' - RESOLVED              │
+│ ✓ train.py now automatically adds project root to Python path             │
+│ ✓ Works from any directory, VSCode debugger, command line                 │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ VERIFICATION ─────────────────────────────────────────────────────────────┐
+│ Test the fix:                                                              │
+│   cd /home/kanke/Documents/new_github/ai_test/agfusion                     │
+│   python test_imports.py                                                   │
+│                                                                            │
+│ Expected: ✓ All checks pass                                               │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ BASIC TRAINING ───────────────────────────────────────────────────────────┐
+│ Single GPU:                                                                │
+│   cd /home/kanke/Documents/new_github/ai_test/agfusion                     │
+│   python projects/tools/train.py \                                         │
+│       projects/configs/agfusion/agfusion_tiny_r50_24e.py \                 │
+│       --work-dir ./work_dirs/agfusion_tiny                                 │
+│                                                                            │
+│ Multi-GPU (2 GPUs):                                                        │
+│   bash projects/tools/dist_train.sh \                                      │
+│       projects/configs/agfusion/agfusion_tiny_r50_24e.py 2                 │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ WITH SATELLITE IMAGES ────────────────────────────────────────────────────┐
+│ 1. Update config: projects/configs/agfusion/agfusion_with_satellite.py    │
+│    Set: satellite_dir = '/path/to/satellite/prior_map_trainval'           │
+│                                                                            │
+│ 2. Run training:                                                           │
+│    python projects/tools/train.py \                                        │
+│        projects/configs/agfusion/agfusion_with_satellite.py \              │
+│        --work-dir ./work_dirs/agfusion_satellite                           │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ COMMON OPTIONS ───────────────────────────────────────────────────────────┐
+│ --work-dir PATH       : Save logs/models to PATH                          │
+│ --resume-from PATH    : Resume from checkpoint                            │
+│ --no-validate         : Skip validation                                   │
+│ --seed INT            : Random seed                                        │
+│ --deterministic       : Deterministic mode                                │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ MONITORING ───────────────────────────────────────────────────────────────┐
+│ Check logs:                                                                │
+│   tail -f ./work_dirs/agfusion_tiny/*.log                                 │
+│                                                                            │
+│ Check GPU:                                                                 │
+│   nvidia-smi                                                               │
+│                                                                            │
+│ List checkpoints:                                                          │
+│   ls -lh ./work_dirs/agfusion_tiny/*.pth                                  │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ FILES MODIFIED/CREATED ───────────────────────────────────────────────────┐
+│ Modified:                                                                  │
+│   • projects/tools/train.py (sys.path fix)                                │
+│   • test_imports.py (fixed path logic)                                    │
+│   • projects/mmdet3d_plugin/datasets/nuscenes_map_dataset.py (satellite)  │
+│                                                                            │
+│ Created:                                                                   │
+│   • TRAINING_GUIDE.md (comprehensive guide)                               │
+│   • FIX_SUMMARY.py (detailed fix explanation)                             │
+│   • verify_path_fix.py (verification script)                              │
+│   • debug/SATELLITE_INTEGRATION.md (satellite guide)                      │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ QUICK TROUBLESHOOTING ────────────────────────────────────────────────────┐
+│ Problem: OOM (Out of Memory)                                              │
+│ Solution: Reduce samples_per_gpu in config                                │
+│                                                                            │
+│ Problem: Can't find data                                                  │
+│ Solution: Check data paths in config file                                 │
+│                                                                            │
+│ Problem: CUDA not available                                               │
+│ Solution: Check: python -c "import torch; print(torch.cuda.is_available())"│
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ DOCUMENTATION ────────────────────────────────────────────────────────────┐
+│ Full training guide:     TRAINING_GUIDE.md                                │
+│ Fix details:             FIX_SUMMARY.py                                   │
+│ Satellite integration:   debug/SATELLITE_INTEGRATION.md                   │
+└────────────────────────────────────────────────────────────────────────────┘
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║  Status: ✓ READY TO TRAIN                                                 ║
+╚════════════════════════════════════════════════════════════════════════════╝

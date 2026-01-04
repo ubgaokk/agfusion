@@ -10,12 +10,19 @@ import argparse
 import copy
 import mmcv
 import os
+import sys
 import time
 import torch
 import warnings
 from mmcv import Config, DictAction
 from mmcv.runner import get_dist_info, init_dist
 from os import path as osp
+
+# Add the project root directory to Python path
+# This ensures 'projects' module can be imported
+project_root = osp.abspath(osp.join(osp.dirname(__file__), '../..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from mmdet import __version__ as mmdet_version
 from mmdet3d import __version__ as mmdet3d_version
