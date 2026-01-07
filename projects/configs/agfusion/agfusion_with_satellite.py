@@ -43,7 +43,7 @@ queue_length = 1
 
 # Satellite configuration
 use_satellite = True
-satellite_dir = '/path/to/your/satellite/prior_map_trainval'  # Update this path
+satellite_dir = '/media/kanke/easystore/Lambda/Data_set/data_nuscences/satellite_map_dataset/satellite_map_trainval'  # Update this path
 satellite_size = (400, 200)  # (height, width) matching PriorMap default
 
 # Dataset configuration with satellite support

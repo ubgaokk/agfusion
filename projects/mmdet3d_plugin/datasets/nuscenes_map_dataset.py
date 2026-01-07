@@ -1266,7 +1266,7 @@ class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):
         
         # Load satellite image using PriorMap if enabled
         if self.use_satellite and self.prior_map is not None:
-            satellite_img = self.get_satellite_image(info['token'])
+            satellite_img = self.get_satellite_image(info['ego_pose_token'])
             if satellite_img is not None:
                 input_dict['satellite_img'] = satellite_img
                 

@@ -140,22 +140,31 @@ class Up(nn.Module):
     """Upsampling block: Upsample -> Concat -> DoubleConv"""
     
     def __init__(self, in_channels, out_channels, bilinear=True):
+        """
+        Args:
+            in_channels: Number of channels from decoder (before upsampling)
+            out_channels: Number of output channels (also size of skip connection)
+            bilinear: Use bilinear upsampling vs transposed conv
+        """
         super().__init__()
         
         # Use bilinear upsampling or transposed convolution
         if bilinear:
             self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-            self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
+            # After concat: in_channels (from decoder) + out_channels (from skip) -> out_channels
+            self.conv = DoubleConv(in_channels + out_channels, out_channels)
         else:
+            # Upsample and reduce channels at the same time
             self.up = nn.ConvTranspose2d(
-                in_channels, in_channels // 2, kernel_size=2, stride=2
+                in_channels, out_channels, kernel_size=2, stride=2
             )
-            self.conv = DoubleConv(in_channels, out_channels)
+            # After concat: out_channels (upsampled) + out_channels (skip) -> out_channels
+            self.conv = DoubleConv(out_channels * 2, out_channels)
     
     def forward(self, x1, x2):
         """
         Args:
-            x1: Feature map from decoder path
+            x1: Feature map from decoder path (to be upsampled)
             x2: Skip connection from encoder path
         """
         x1 = self.up(x1)

@@ -11,7 +11,7 @@
             "program": "projects/tools/train.py",
             "console": "integratedTerminal",
             "args": [
-                "/home/kanke/Documents/new_github/ai_test/agfusion/projects/configs/agfusion/agfusion_tiny_r50_24e.py"
+                "/home/kanke/Documents/new_github/ai_test/agfusion/projects/configs/agfusion/agfusion_tiny_r50_24e_with_satellite.py"
             ]
         }
     ]

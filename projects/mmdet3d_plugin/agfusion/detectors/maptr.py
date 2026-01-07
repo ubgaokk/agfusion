@@ -9,6 +9,7 @@ from projects.mmdet3d_plugin.models.utils.grid_mask import GridMask
 from mmcv.runner import force_fp32, auto_fp16
 from mmdet3d.ops import Voxelization, DynamicScatter
 from mmdet3d.models import builder
+
 @DETECTORS.register_module()
 class MapTR(MVXTwoStageDetector):
     """MapTR.
@@ -49,6 +50,11 @@ class MapTR(MVXTwoStageDetector):
         self.use_grid_mask = use_grid_mask
         self.fp16_enabled = False
 
+        # Build satellite encoder/backbone if provided
+        self.sat_backbone = None
+        if sat_backbone is not None:
+            self.sat_backbone = builder.build_backbone(sat_backbone)
+        
         # temporal
         self.video_test_mode = video_test_mode
         self.prev_frame_info = {
@@ -71,6 +77,40 @@ class MapTR(MVXTwoStageDetector):
             )
             self.voxelize_reduce = lidar_encoder.get("voxelize_reduce", True)
 
+    @auto_fp16(apply_to=('sat_img'), out_fp32=True)
+    def extract_sat_feat(self, sat_img, img_metas=None):
+        """Extract features from satellite images.
+        
+        Args:
+            sat_img (torch.Tensor): Satellite images with shape (B, C, H, W) or (B, T, C, H, W)
+            img_metas (list[dict], optional): Meta information. Defaults to None.
+            
+        Returns:
+            list[torch.Tensor] or None: Multi-scale satellite features or None if not available
+        """
+        if sat_img is None or self.sat_backbone is None:
+            return None
+            
+        # Handle temporal dimension if present
+        if sat_img.dim() == 5:
+            B, T, C, H, W = sat_img.shape
+            # Use only the current frame (last in sequence)
+            sat_img = sat_img[:, -1, ...]  # (B, C, H, W)
+        
+        # Extract satellite features
+        sat_feats = self.sat_backbone(sat_img)
+        
+        # Ensure output is a list of feature maps
+        if isinstance(sat_feats, dict):
+            sat_feats = list(sat_feats.values())
+        elif isinstance(sat_feats, torch.Tensor):
+            sat_feats = [sat_feats]
+            
+        return sat_feats
+
+    def extract_sat_feature(self, sat_img, sat_metas):
+        """Deprecated: Use extract_sat_feat instead."""
+        return self.extract_sat_feat(sat_img, sat_metas)
 
     def extract_img_feat(self, img, img_metas, len_queue=None):
         """Extract features of images."""
@@ -236,6 +276,7 @@ class MapTR(MVXTwoStageDetector):
                       gt_bboxes_ignore=None,
                       img_depth=None,
                       img_mask=None,
+                      satellite_img=None,
                       ):
         """Forward training function.
         Args:
@@ -257,12 +298,19 @@ class MapTR(MVXTwoStageDetector):
                 used for training Fast RCNN. Defaults to None.
             gt_bboxes_ignore (list[torch.Tensor], optional): Ground truth
                 2D boxes in images to be ignored. Defaults to None.
+            satellite_img (torch.Tensor, optional): Satellite images with shape
+                (N, C, H, W). Defaults to None.
         Returns:
             dict: Losses of different branches.
         """
         lidar_feat = None
         if self.modality == 'fusion':
             lidar_feat = self.extract_lidar_feat(points)
+        
+        # Extract satellite features if available
+        sat_feats = None
+        if satellite_img is not None:
+            sat_feats = self.extract_sat_feat(satellite_img, img_metas)
         
         len_queue = img.size(1)
         prev_img = img[:, :-1, ...]
@@ -277,6 +325,13 @@ class MapTR(MVXTwoStageDetector):
         if not img_metas[0]['prev_bev_exists']:
             prev_bev = None
         img_feats = self.extract_feat(img=img, img_metas=img_metas)
+        
+        # # TODO: Integrate satellite features with img_feats or pass separately to head
+        # # For now, we store sat_feats in img_metas for the head to access
+        # if sat_feats is not None:
+        #     for i, meta in enumerate(img_metas):
+        #         meta['sat_feats'] = sat_feats
+        
         losses = dict()
         losses_pts = self.forward_pts_train(img_feats, lidar_feat, gt_bboxes_3d,
                                             gt_labels_3d, img_metas,
@@ -361,11 +416,21 @@ class MapTR(MVXTwoStageDetector):
         ]
         # import pdb;pdb.set_trace()
         return outs['bev_embed'], bbox_results
-    def simple_test(self, img_metas, img=None, points=None, prev_bev=None, rescale=False, **kwargs):
+    def simple_test(self, img_metas, img=None, points=None, prev_bev=None, rescale=False, satellite_img=None, **kwargs):
         """Test function without augmentaiton."""
         lidar_feat = None
         if self.modality =='fusion':
             lidar_feat = self.extract_lidar_feat(points)
+        
+        # Extract satellite features if available
+        sat_feats = None
+        if satellite_img is not None:
+            sat_feats = self.extract_sat_feat(satellite_img, img_metas)
+            # # Store in img_metas for head to access
+            # if sat_feats is not None:
+            #     for i, meta in enumerate(img_metas):
+            #         meta['sat_feats'] = sat_feats
+        
         img_feats = self.extract_feat(img=img, img_metas=img_metas)
 
         bbox_list = [dict() for i in range(len(img_metas))]
