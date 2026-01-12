@@ -37,6 +37,7 @@ class MapTR(MVXTwoStageDetector):
                  modality='vision',
                  lidar_encoder=None,
                  sat_backbone=None,
+                 sat_fusion=None,
                  ):
 
         super(MapTR,
@@ -54,6 +55,12 @@ class MapTR(MVXTwoStageDetector):
         self.sat_backbone = None
         if sat_backbone is not None:
             self.sat_backbone = builder.build_backbone(sat_backbone)
+        
+        # Build satellite-BEV fusion module if provided
+        self.sat_fusion = None
+        if sat_fusion is not None:
+            from ..masked_t import Fusion_Atten_Masked
+            self.sat_fusion = Fusion_Atten_Masked(**sat_fusion)
         
         # temporal
         self.video_test_mode = video_test_mode
@@ -163,10 +170,12 @@ class MapTR(MVXTwoStageDetector):
                           gt_labels_3d,
                           img_metas,
                           gt_bboxes_ignore=None,
-                          prev_bev=None):
+                          prev_bev=None,
+                          sat_feats=None):
         """Forward function'
         Args:
             pts_feats (list[torch.Tensor]): Features of point cloud branch
+            lidar_feat: LiDAR features
             gt_bboxes_3d (list[:obj:`BaseInstance3DBoxes`]): Ground truth
                 boxes for each sample.
             gt_labels_3d (list[torch.Tensor]): Ground truth labels for
@@ -175,9 +184,26 @@ class MapTR(MVXTwoStageDetector):
             gt_bboxes_ignore (list[torch.Tensor], optional): Ground truth
                 boxes to be ignored. Defaults to None.
             prev_bev (torch.Tensor, optional): BEV features of previous frame.
+            sat_feats (torch.Tensor, optional): Satellite features.
         Returns:
             dict: Losses of each branch.
         """
+        
+        # # Fuse satellite features with BEV features if both are available
+        # if sat_feats is not None and self.sat_fusion is not None:
+        #     # pts_feats is a list of multi-scale features
+        #     # Fuse satellite features with the last (highest resolution) BEV feature
+        #     # Note: Adjust index based on your specific architecture
+        #     if isinstance(pts_feats, list) and len(pts_feats) > 0:
+        #         # Get BEV feature map (typically the last one in the list)
+        #         bev_feat = pts_feats[-1]
+                
+        #         # Apply fusion
+        #         fused_feat = self.sat_fusion(bev_feat, sat_feats)
+                
+        #         # Replace the fused feature back
+        #         pts_feats = list(pts_feats)  # Make sure it's mutable
+        #         pts_feats[-1] = fused_feat
 
         outs = self.pts_bbox_head(
             pts_feats, lidar_feat, img_metas, prev_bev)
@@ -326,16 +352,13 @@ class MapTR(MVXTwoStageDetector):
             prev_bev = None
         img_feats = self.extract_feat(img=img, img_metas=img_metas)
         
-        # # TODO: Integrate satellite features with img_feats or pass separately to head
-        # # For now, we store sat_feats in img_metas for the head to access
-        # if sat_feats is not None:
-        #     for i, meta in enumerate(img_metas):
-        #         meta['sat_feats'] = sat_feats
-        
         losses = dict()
-        losses_pts = self.forward_pts_train(img_feats, lidar_feat, gt_bboxes_3d,
-                                            gt_labels_3d, img_metas,
-                                            gt_bboxes_ignore, prev_bev)
+        losses_pts = self.forward_pts_train(
+            img_feats, lidar_feat, gt_bboxes_3d,
+            gt_labels_3d, img_metas,
+            gt_bboxes_ignore, prev_bev, 
+            sat_feats=sat_feats  # Pass satellite features to pts_train
+        )
 
         losses.update(losses_pts)
         return losses
@@ -403,8 +426,23 @@ class MapTR(MVXTwoStageDetector):
             result_dict['attrs_3d'] = attrs.cpu()
 
         return result_dict
-    def simple_test_pts(self, x, lidar_feat, img_metas, prev_bev=None, rescale=False):
-        """Test function"""
+        
+    def simple_test_pts(self, x, lidar_feat, img_metas, prev_bev=None, rescale=False, sat_feats=None):
+        """Test function with optional satellite features"""
+        
+        # Fuse satellite features with BEV features if both are available
+        if sat_feats is not None and self.sat_fusion is not None:
+            if isinstance(x, list) and len(x) > 0:
+                # Get BEV feature map (typically the last one in the list)
+                bev_feat = x[-1]
+                
+                # Apply fusion
+                fused_feat = self.sat_fusion(bev_feat, sat_feats)
+                
+                # Replace the fused feature back
+                x = list(x)  # Make sure it's mutable
+                x[-1] = fused_feat
+        
         outs = self.pts_bbox_head(x, lidar_feat, img_metas, prev_bev=prev_bev)
 
         bbox_list = self.pts_bbox_head.get_bboxes(
@@ -426,16 +464,12 @@ class MapTR(MVXTwoStageDetector):
         sat_feats = None
         if satellite_img is not None:
             sat_feats = self.extract_sat_feat(satellite_img, img_metas)
-            # # Store in img_metas for head to access
-            # if sat_feats is not None:
-            #     for i, meta in enumerate(img_metas):
-            #         meta['sat_feats'] = sat_feats
         
         img_feats = self.extract_feat(img=img, img_metas=img_metas)
 
         bbox_list = [dict() for i in range(len(img_metas))]
         new_prev_bev, bbox_pts = self.simple_test_pts(
-            img_feats, lidar_feat, img_metas, prev_bev, rescale=rescale)
+            img_feats, lidar_feat, img_metas, prev_bev, rescale=rescale, sat_feats=sat_feats)
         for result_dict, pts_bbox in zip(bbox_list, bbox_pts):
             result_dict['pts_bbox'] = pts_bbox
         return new_prev_bev, bbox_list

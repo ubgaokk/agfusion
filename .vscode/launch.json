@@ -13,6 +13,20 @@
             "args": [
                 "/home/kanke/Documents/new_github/ai_test/agfusion/projects/configs/agfusion/agfusion_tiny_r50_24e_with_satellite.py"
             ]
+        },
+        {
+            "name": "Debug load_infos.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/home/kanke/Documents/new_github/ai_test/agfusion/debug/load_infos.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debug vis_pkl.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/home/kanke/Documents/new_github/ai_test/agfusion/debug/vis_pkl.py",
+            "console": "integratedTerminal"
         }
     ]
 }

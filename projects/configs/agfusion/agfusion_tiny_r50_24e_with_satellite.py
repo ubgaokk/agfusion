@@ -142,13 +142,13 @@ model = dict(
                     ffn_dropout=0.1,
                     operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
                                      'ffn', 'norm'))),
-            fusion=dict(
-                type='MapFusion',
-                in_channels=[_dim_, _dim_],
-                out_channels=_dim_,
-                num_levels=_num_levels_,
-                fusion_type='concat'
-            ),
+            # fusion=dict(
+            #     type='MapFusion',
+            #     in_channels=[_dim_, _dim_],
+            #     out_channels=_dim_,
+            #     num_levels=_num_levels_,
+            #     fusion_type='concat'
+            # ),
             decoder=dict(
                 type='MapTRDecoder',
                 num_layers=6,

@@ -12,6 +12,7 @@ from mmdet.models.utils.builder import TRANSFORMER
 from projects.mmdet3d_plugin.bevformer.modules.transformer import PerceptionTransformer
 from mmcv.cnn import build_model_from_cfg
 from mmdet.models import HEADS
+from .masked_t import Fusion_Atten_Masked
 
 
 @TRANSFORMER.register_module()
@@ -41,7 +42,12 @@ class MapTRPerceptionTransformer(PerceptionTransformer):
                  use_cams_embeds=True,
                  rotate_center=[100, 100],
                  fusion=None,
+                 len_can_bus=18,
                  **kwargs):
+        
+        # Set len_can_bus BEFORE calling super().__init__() 
+        # because parent's init_layers() needs it
+        self.len_can_bus = len_can_bus
         
         # Initialize parent class
         super(MapTRPerceptionTransformer, self).__init__(
@@ -59,11 +65,26 @@ class MapTRPerceptionTransformer(PerceptionTransformer):
             rotate_center=rotate_center,
             **kwargs
         )
-        
-        # Build fusion module
+        # Build fusion module using Fusion_Atten_Masked
         self.fusion = None
         if fusion is not None:
-            self.fusion = build_model_from_cfg(fusion, HEADS)
+            self.fusion = Fusion_Atten_Masked(**fusion)
+
+    def init_layers(self):
+        """Initialize layers of the Detr3DTransformer."""
+        self.level_embeds = nn.Parameter(torch.Tensor(
+            self.num_feature_levels, self.embed_dims))
+        self.cams_embeds = nn.Parameter(
+            torch.Tensor(self.num_cams, self.embed_dims))
+        self.reference_points = nn.Linear(self.embed_dims, 2) # TODO, this is a hack
+        self.can_bus_mlp = nn.Sequential(
+            nn.Linear(self.len_can_bus, self.embed_dims // 2),
+            nn.ReLU(inplace=True),
+            nn.Linear(self.embed_dims // 2, self.embed_dims),
+            nn.ReLU(inplace=True),
+        )
+        if self.can_bus_norm:
+            self.can_bus_mlp.add_module('norm', nn.LayerNorm(self.embed_dims))
     
     @auto_fp16(apply_to=('mlvl_feats', 'bev_queries', 'prev_bev', 'bev_pos', 'satellite_feats'))
     def get_bev_features(
@@ -105,33 +126,6 @@ class MapTRPerceptionTransformer(PerceptionTransformer):
             prev_bev=prev_bev,
             **kwargs
         )  # Shape: (bs, bev_h*bev_w, embed_dims)
-        
-        # Apply fusion if satellite features are provided and fusion module exists
-        if self.fusion is not None and satellite_feats is not None:
-            bs = bev_embed.shape[1] if bev_embed.dim() == 3 else bev_embed.shape[0]
-            
-            # Reshape BEV embed from (num_query, bs, embed_dims) or (bs, num_query, embed_dims) 
-            # to (bs, embed_dims, bev_h, bev_w)
-            if bev_embed.dim() == 3 and bev_embed.shape[0] == bev_h * bev_w:
-                # Shape: (bev_h*bev_w, bs, embed_dims) -> (bs, embed_dims, bev_h, bev_w)
-                bev_embed_spatial = bev_embed.permute(1, 2, 0).reshape(bs, -1, bev_h, bev_w)
-            elif bev_embed.dim() == 3 and bev_embed.shape[1] == bev_h * bev_w:
-                # Shape: (bs, bev_h*bev_w, embed_dims) -> (bs, embed_dims, bev_h, bev_w)
-                bev_embed_spatial = bev_embed.permute(0, 2, 1).reshape(bs, -1, bev_h, bev_w)
-            else:
-                # Already in spatial format
-                bev_embed_spatial = bev_embed
-            
-            # Apply fusion
-            fused_bev = self.fusion(bev_embed_spatial, satellite_feats)
-            
-            # Reshape back to original format (num_query, bs, embed_dims)
-            if bev_embed.dim() == 3 and bev_embed.shape[0] == bev_h * bev_w:
-                bev_embed = fused_bev.flatten(2).permute(2, 0, 1)
-            elif bev_embed.dim() == 3:
-                bev_embed = fused_bev.flatten(2).permute(0, 2, 1)
-            else:
-                bev_embed = fused_bev
         
         return bev_embed
     
@@ -181,6 +175,40 @@ class MapTRPerceptionTransformer(PerceptionTransformer):
             satellite_feats=satellite_feats,
             **kwargs
         )  # bev_embed shape: (num_query, bs, embed_dims) or (bs, bev_h*bev_w, embed_dims)
+        
+        # Fuse satellite features with BEV features if both are available
+        if self.fusion is not None and satellite_feats is not None:
+            # Get satellite feature (use the last one if it's a list)
+            if isinstance(satellite_feats, list) and len(satellite_feats) > 0:
+                sat_feat = satellite_feats[-1]  # Use the last (highest resolution) feature
+            else:
+                sat_feat = satellite_feats
+            
+            bs = mlvl_feats[0].size(0)
+            
+            # Reshape BEV embed from sequence to spatial format (bs, embed_dims, bev_h, bev_w)
+            if bev_embed.dim() == 3 and bev_embed.shape[0] == bev_h * bev_w:
+                # Shape: (bev_h*bev_w, bs, embed_dims) -> (bs, embed_dims, bev_h, bev_w)
+                bev_embed_spatial = bev_embed.permute(1, 2, 0).reshape(bs, -1, bev_h, bev_w)
+            elif bev_embed.dim() == 3 and bev_embed.shape[1] == bev_h * bev_w:
+                # Shape: (bs, bev_h*bev_w, embed_dims) -> (bs, embed_dims, bev_h, bev_w)
+                bev_embed_spatial = bev_embed.permute(0, 2, 1).reshape(bs, -1, bev_h, bev_w)
+            else:
+                # Already in spatial format
+                bev_embed_spatial = bev_embed
+            
+            # Apply Fusion_Atten_Masked to fuse BEV and satellite features
+            fused_bev = self.fusion(bev_embed_spatial, sat_feat)
+            
+            # Reshape back to original sequence format
+            if bev_embed.dim() == 3 and bev_embed.shape[0] == bev_h * bev_w:
+                # Back to (bev_h*bev_w, bs, embed_dims)
+                bev_embed = fused_bev.flatten(2).permute(2, 0, 1)
+            elif bev_embed.dim() == 3:
+                # Back to (bs, bev_h*bev_w, embed_dims)
+                bev_embed = fused_bev.flatten(2).permute(0, 2, 1)
+            else:
+                bev_embed = fused_bev
         
         # Prepare decoder inputs
         bs = mlvl_feats[0].size(0)
